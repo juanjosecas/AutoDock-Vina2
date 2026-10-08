@@ -23,6 +23,7 @@
 #include "vina.h"
 #include "scoring_function.h"
 #include "precalculate.h"
+#include <utility>
 
 
 void Vina::cite() {
@@ -131,7 +132,7 @@ void Vina::set_ligand_from_string(const std::string& ligand_string) {
 	// Store in Vina object
 	output_container poses;
 	m_poses = poses;
-	m_precalculated_byatom = precalculated_byatom;
+	m_precalculated_byatom = std::move(precalculated_byatom);
 	m_ligand_initialized = true;
 }
 
@@ -176,7 +177,7 @@ void Vina::set_ligand_from_string(const std::vector<std::string>& ligand_string)
 	// Store in Vina object
 	output_container poses;
 	m_poses = poses;
-	m_precalculated_byatom = precalculated_byatom;
+	m_precalculated_byatom = std::move(precalculated_byatom);
 	m_ligand_initialized = true;
 }
 
