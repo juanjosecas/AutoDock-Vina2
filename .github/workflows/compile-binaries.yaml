@@ -21,102 +21,146 @@ on:
     types:
       - published
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'release' }}
+
 jobs:
   compile_binaries:
     name: Compile binaries on ${{ matrix.os }} ${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
+
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             arch: x86_64
-          - os: ubuntu-latest
-            arch: aarch64
-          - os: macos-latest
-            arch: x86_64
-          - os: macos-latest
-            arch: aarch64
-          - os: windows-2019
+          - os: windows-2022
             arch: x64
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with: 
+        with:
           fetch-depth: 0
-      - name: Compile Vina for linux x86-64
-        if: matrix.os == 'ubuntu-latest' && matrix.arch == 'x86_64'
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y libboost-all-dev swig
-          cd ./build/linux/release
-          make
-      - name: Compile Vina for linux ${{ matrix.arch }}
-        if: matrix.os == 'ubuntu-latest' && matrix.arch == 'aarch64'
-        uses: uraimo/run-on-arch-action@v2
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            libboost-system-dev \
+            libboost-thread-dev \
+            libboost-serialization-dev \
+            libboost-filesystem-dev \
+            libboost-program-options-dev
+
+      - name: Compile Linux binaries
+        if: runner.os == 'Linux'
+        run: |
+          make -C build/linux/release -j"$(nproc)"
+
+      - name: Cache Boost for Windows
+        if: runner.os == 'Windows'
+        id: boost-cache
+        uses: actions/cache@v4
         with:
-          arch: ${{ matrix.arch }}
-          distro: ubuntu20.04
-          githubToken: ${{ github.token }}
-          dockerRunArgs: |
-            --volume "${PWD}:/vina"
-          install: |
-            apt-get update -q -y
-            apt-get install -q -y git build-essential make libboost-all-dev swig
-          run: |
-            cd /vina/build/linux/release
-            make
-      - name: Compile Vina for macOS x86_64
-        if: matrix.os == 'macos-latest' && matrix.arch == 'x86_64'
+          path: C:\local\boost_1_83_0
+          key: boost-1.83.0-windows-2022-msvc-14.3-x64-v1
+
+      - name: Install Boost for Windows
+        if: runner.os == 'Windows' && steps.boost-cache.outputs.cache-hit != 'true'
+        shell: pwsh
         run: |
-          arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-          eval "$(/usr/local/bin/brew shellenv)"
-          arch -x86_64 brew install boost swig
-          cd ./build/mac/release
-          arch -x86_64 make
-      - name: Compile Vina for macOS aarch64
-        if: matrix.os == 'macos-latest' && matrix.arch == 'aarch64'
-        run: |
-          brew install boost swig
-          cd ./build/mac/release
-          make
-      - name: Compile Vina for Windows x64
-        if: matrix.os == 'windows-2019' && matrix.arch == 'x64'
-        run: |
-          # Download boost binary
-          $Url = "https://sourceforge.net/projects/boost/files/boost-binaries/1.83.0/boost_1_83_0-msvc-14.2-64.exe"
-          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-          $wcl=(New-Object System.Net.WebClient)
-          $wcl.Headers.Add("user-agent", "Wget/1.21.0")
-          $wcl.DownloadFile($Url, "$env:TEMP\boost.exe")
-          Start-Process -Wait -FilePath "$env:TEMP\boost.exe" "/SILENT","/SP-","/SUPPRESSMSGBOXES"
-          
-          # Install Git using Chocolatey (if not already installed)
-          if (-Not (Get-Command git -ErrorAction SilentlyContinue)) {
-              choco install git -y --no-progress
+          $ErrorActionPreference = "Stop"
+
+          $url = "https://sourceforge.net/projects/boost/files/boost-binaries/1.83.0/boost_1_83_0-msvc-14.3-64.exe/download"
+          $installer = Join-Path $env:RUNNER_TEMP "boost.exe"
+
+          Invoke-WebRequest -Uri $url -OutFile $installer
+
+          $process = Start-Process `
+            -FilePath $installer `
+            -ArgumentList @(
+              "/VERYSILENT",
+              "/SP-",
+              "/SUPPRESSMSGBOXES",
+              "/NORESTART",
+              "/DIR=C:\local\boost_1_83_0"
+            ) `
+            -Wait `
+            -PassThru
+
+          if ($process.ExitCode -ne 0) {
+            throw "Boost installer failed with exit code $($process.ExitCode)"
           }
 
-          # Fetch all tags
-          if ($(git rev-parse --is-shallow-repository) -eq "true") {
-              git fetch --prune --unshallow --tags 2>$null
-          } else {
-              git fetch --prune --tags 2>$null
+          $boostLib = "C:\local\boost_1_83_0\lib64-msvc-14.3"
+          if (-not (Test-Path $boostLib)) {
+            throw "Boost libraries were not installed at $boostLib"
           }
 
-          # Get the nearest tag, fallback to commit hash if no tag exists
-          $env:GIT_VERSION = $(git describe --tags --abbrev=7 --dirty --always 2>$null)
-          
-          # Ensure fallback value if Git describe fails
-          if (-not $env:GIT_VERSION) { $env:GIT_VERSION = "0.0.0-unknown" }
-          echo "GIT_VERSION=$env:GIT_VERSION" >> $env:GITHUB_ENV
+      - name: Compile Windows binaries
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
 
-          # Execute compile.bat (in cmd)
-          cd .\build\windows
-          .\compile.bat Release x64 "C:\local\boost_1_83_0\lib64-msvc-14.2" "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\MSBuild\Current\Bin\MSBuild.exe" "$env:GIT_VERSION"
-        shell: powershell
-      - name: Upload artifacts for inspection
+          $boostLib = "C:\local\boost_1_83_0\lib64-msvc-14.3"
+          if (-not (Test-Path $boostLib)) {
+            throw "Boost libraries not found at $boostLib"
+          }
+
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $msbuild = & $vswhere `
+            -latest `
+            -products '*' `
+            -requires Microsoft.Component.MSBuild `
+            -find 'MSBuild\**\Bin\MSBuild.exe' |
+            Select-Object -First 1
+
+          if (-not $msbuild) {
+            throw "MSBuild was not found"
+          }
+
+          $gitVersion = git describe --tags --abbrev=7 --dirty --always
+          if ($LASTEXITCODE -ne 0 -or -not $gitVersion) {
+            throw "Could not determine the Git version"
+          }
+
+          Write-Host "Version: $gitVersion"
+          Write-Host "MSBuild: $msbuild"
+          Write-Host "Boost: $boostLib"
+
+          Set-Location build/windows
+
+          & .\compile.bat Release x64 $boostLib $msbuild $gitVersion
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Compilation failed with exit code $LASTEXITCODE"
+          }
+
+      - name: Upload Linux binaries
+        if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
-          name: binaries-${{ matrix.os }}${{ matrix.arch }}
+          name: binaries-linux-x86_64
+          if-no-files-found: error
           path: |
-            ./**/release/vina*
+            build/linux/release/vina
+            build/linux/release/vina_split
+
+      - name: Upload Windows binaries
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-windows-x64
+          if-no-files-found: error
+          path: |
+            build/windows/release/vina.exe
+            build/windows/release/vina_split.exe
