@@ -25,6 +25,7 @@
 
 #include "scoring_function.h"
 #include "matrix.h"
+#include <utility>
 
 
 //Forward declaration
@@ -155,7 +156,8 @@ public:
             }
         }
 
-        m_data = data;
+        // Transfer the completed tables without duplicating their buffers.
+        m_data = std::move(data);
     };
     fl eval_fast(sz type_pair_index, fl r2) const{
         assert(r2 <= m_max_cutoff_sqr);
@@ -226,7 +228,7 @@ public:
                 p.init_from_smooth_fst(rs);
             }
         }
-        m_data = data;
+        m_data = std::move(data);
     };
     fl eval_fast(sz i, sz j, fl r2) const{
         assert(r2 <= m_max_cutoff_sqr);
