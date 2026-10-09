@@ -41,7 +41,7 @@ class Vina:
         elif sf_name == 'vinardo':
             self._weights = (-0.045, 0.8, -0.035, -0.6, 50, 0.05846)
         else:
-            self._weights = (0.1662, 0.1209, 0.1406, 0.1322, 50)
+            self._weights = (0.1662, 0.1209, 0.1406, 0.1322, 50, 0.2983)
         self._rigid_receptor = None
         self._flex_receptor = None
         self._ligands = None
@@ -379,7 +379,7 @@ class Vina:
             energy_range (float): maximum energy difference from best pose (default: 3.0 kcal/mol)
         
         Returns:
-            ndarray: Array of energies from each pose (rows=poses, columns=energies) 
+            ndarray: Unrounded energies from each pose (rows=poses, columns=energies)
             
             Vina/Vinardo FF:
                 columns=[total, inter, intra, torsions, intra best pose]
@@ -393,7 +393,7 @@ class Vina:
         elif energy_range <= 0:
             raise ValueError('Error: energy range must be greater than zero.')
 
-        return np.around(self._vina.get_poses_energies(n_poses, energy_range), decimals=3)
+        return np.asarray(self._vina.get_poses_energies(n_poses, energy_range), dtype=float)
 
     def randomize(self, max_steps=10000):
         """Randomize the input ligand conformation.
@@ -411,7 +411,7 @@ class Vina:
             unbound_energy (float): Optionally pass the unbound systems energy of the ligand.
 
         Returns:
-            nadarray: Array of energies from current pose.
+            ndarray: Unrounded energies from current pose.
 
             Vina/Vinardo FF:
                 columns=[total, lig_inter, flex_inter, other_inter, flex_intra, lig_intra, torsions, lig_intra best pose]
@@ -420,12 +420,11 @@ class Vina:
                 columns=[total, lig_inter, flex_inter, other_inter, flex_intra, lig_intra, torsions, -lig_intra]
 
         """
-        # It does not make sense to report energies with a precision higher than 3
-        # since the coordinates precision is 3.
+        # Preserve engine precision for downstream calculations; format only for display.
         if unbound_energy is None:
-            energies = np.around(self._vina.score(), decimals=3)
+            energies = np.asarray(self._vina.score(), dtype=float)
         else:
-            energies = np.around(self._vina.score(unbound_energy), decimals=3)
+            energies = np.asarray(self._vina.score(unbound_energy), dtype=float)
         return energies
 
     def optimize(self, max_steps=0):
@@ -436,7 +435,7 @@ class Vina:
                              the maximum number of steps will be equal to (25 + num_movable_atoms) / 3).
 
         Returns:
-            nadarray: Array of energies from optimized pose.
+            ndarray: Unrounded energies from optimized pose.
 
             Vina/Vinardo FF:
                 columns=[total, lig_inter, flex_inter, other_inter, flex_intra, lig_intra, torsions, lig_intra best pose]
@@ -448,9 +447,8 @@ class Vina:
         if max_steps < 0:
             raise ValueError('Error: max_steps cannot be negative.')
 
-        # It does not make sense to report energies with a precision higher than 3
-        # since the coordinates precision is 3.
-        energies = np.around(self._vina.optimize(max_steps), decimals=3)
+        # Preserve engine precision for downstream calculations; format only for display.
+        energies = np.asarray(self._vina.optimize(max_steps), dtype=float)
         return energies
 
     def dock(self, exhaustiveness=8, n_poses=20, min_rmsd=1.0, max_evals=0):
