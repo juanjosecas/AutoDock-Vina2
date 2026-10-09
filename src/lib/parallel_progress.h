@@ -23,41 +23,88 @@
 #ifndef VINA_PARALLEL_PROGRESS_H
 #define VINA_PARALLEL_PROGRESS_H
 
-#include <boost/version.hpp>
-#if BOOST_VERSION < 107200
-#include <boost/progress.hpp>
-typedef boost::progress_display boost_progress;
-#else
-#include <boost/timer/progress_display.hpp>
-typedef boost::timer::progress_display boost_progress;
-#endif
 #include <boost/thread/mutex.hpp>
-
+#include <algorithm>
+#include <chrono>
+#include <cstddef>
 #include <functional>
-
+#include <iomanip>
+#include <iostream>
+#include <sstream>
+#include "console.h"
 #include "incrementable.h"
 
 struct parallel_progress : public incrementable {
-	parallel_progress(std::function<void(double)>* c = NULL) : p(NULL), callback(c) {}
-	void init(unsigned long n) {
+    parallel_progress(std::function<void(double)>* c = NULL)
+        : callback(c), count(0), value(0), active(false), terminal(false),
+          estimate(true), next_log_percent(10), last_width(0) {}
+
+    void init(std::size_t n, bool estimate_remaining = true) {
         count = n;
-        p = new boost_progress(count);
+        value = 0;
+        active = count > 0;
+        terminal = vina_console::interactive();
+        estimate = estimate_remaining;
+        started = last_render = clock::now();
+        if (active) render(false);
     }
-	void operator++() {
-		if(p) {
-			boost::mutex::scoped_lock self_lk(self);
-			const unsigned long value = ++(*p);
-            if(callback)
-                (*callback)(static_cast<double>(value) / count);
-		}
-	}
-	virtual ~parallel_progress() { delete p; }
+
+    void operator++() {
+        if (!active) return;
+        boost::mutex::scoped_lock lock(self);
+        ++value;
+        // Keep callback frequency and serialization unchanged.
+        if (callback) (*callback)(fraction());
+        const clock::time_point now = clock::now();
+        const unsigned percent = static_cast<unsigned>(100 * fraction());
+        if ((terminal && now - last_render >= std::chrono::milliseconds(200)) ||
+            (!terminal && percent >= next_log_percent)) {
+            render(false);
+            next_log_percent = (percent / 10 + 1) * 10;
+            last_render = now;
+        }
+    }
+
+    void finish() {
+        if (!active) return;
+        boost::mutex::scoped_lock lock(self);
+        render(true);
+        active = false;
+    }
+
 private:
-	boost::mutex self;
-	boost_progress* p;
+    typedef std::chrono::steady_clock clock;
+    double fraction() const { return std::min(1.0, static_cast<double>(value) / count); }
+    void render(bool complete) {
+        const double elapsed = std::chrono::duration<double>(clock::now() - started).count();
+        std::ostringstream line;
+        line << (complete ? "Search complete " : "Search ");
+        if (terminal) {
+            const unsigned filled = static_cast<unsigned>(24 * fraction());
+            line << '[' << std::string(filled, '=') << std::string(24 - filled, ' ') << "] ";
+        }
+        line << std::fixed << std::setprecision(1) << 100 * fraction()
+             << "% of step budget | " << elapsed << " s";
+        if (!complete && estimate && value > 0 && value < count)
+            line << " | ETA ~" << elapsed * (1 - fraction()) / fraction() << " s";
+        std::string text = line.str();
+        if (terminal) {
+            std::cout << '\r' << (complete ? vina_console::success(text) : text);
+            if (text.size() < last_width) std::cout << std::string(last_width - text.size(), ' ');
+            last_width = text.size();
+            if (complete) std::cout << '\n';
+        } else {
+            std::cout << text << '\n';
+        }
+        std::cout.flush();
+    }
+    boost::mutex self;
     std::function<void(double)>* callback;
-    unsigned long count;
+    std::size_t count, value;
+    bool active, terminal, estimate;
+    unsigned next_log_percent;
+    std::size_t last_width;
+    clock::time_point started, last_render;
 };
 
 #endif
-

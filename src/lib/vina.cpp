@@ -24,6 +24,8 @@
 #include "scoring_function.h"
 #include "precalculate.h"
 #include <utility>
+#include <algorithm>
+#include "console.h"
 
 namespace {
 const int energy_output_precision = 6;
@@ -689,19 +691,25 @@ void Vina::randomize(const int max_steps) {
 }
 
 void Vina::show_score(const std::vector<double> energies) {
-	std::cout << "Estimated Free Energy of Binding   : " << std::fixed << std::setprecision(energy_output_precision) << energies[0] << " (kcal/mol) [=(1)+(2)+(3)-(4)]\n";
-	std::cout << "(1) Final Intermolecular Energy    : " << std::fixed << std::setprecision(energy_output_precision) << energies[1] + energies[2] << " (kcal/mol)\n";
-	std::cout << "    Ligand - Receptor              : " << std::fixed << std::setprecision(energy_output_precision) << energies[1] << " (kcal/mol)\n";
-	std::cout << "    Ligand - Flex side chains      : " << std::fixed << std::setprecision(energy_output_precision) << energies[2] << " (kcal/mol)\n";
-	std::cout << "(2) Final Total Internal Energy    : " << std::fixed << std::setprecision(energy_output_precision) << energies[3] + energies[4] + energies[5] << " (kcal/mol)\n";
-	std::cout << "    Ligand                         : " << std::fixed << std::setprecision(energy_output_precision) << energies[5] << " (kcal/mol)\n";
-	std::cout << "    Flex   - Receptor              : " << std::fixed << std::setprecision(energy_output_precision) << energies[3] << " (kcal/mol)\n";
-	std::cout << "    Flex   - Flex side chains      : " << std::fixed << std::setprecision(energy_output_precision) << energies[4] << " (kcal/mol)\n";
-	std::cout << "(3) Torsional Free Energy          : " << std::fixed << std::setprecision(energy_output_precision) << energies[6] << " (kcal/mol)\n";
-	if (m_sf_choice == SF_VINA || m_sf_choice == SF_VINARDO) {
-		std::cout << "(4) Unbound System's Energy        : " << std::fixed << std::setprecision(energy_output_precision) << energies[7] << " (kcal/mol)\n";
-	} else {
-		std::cout << "(4) Unbound System's Energy [=(2)] : " << std::fixed << std::setprecision(energy_output_precision) << energies[7] << " (kcal/mol)\n";
+	std::cout << vina_console::heading("Energy breakdown (kcal/mol)") << "\n";
+	const auto print_energy = [](const std::string& label, double value, bool highlight = false) {
+		std::ostringstream row;
+		row << "  " << std::left << std::setw(34) << label << std::right << std::setw(16)
+		    << std::fixed << std::setprecision(energy_output_precision) << value;
+		std::cout << (highlight ? vina_console::success(row.str()) : row.str()) << "\n";
+	};
+	print_energy("Estimated binding score", energies[0], true);
+	print_energy("Intermolecular", energies[1] + energies[2]);
+	print_energy("Internal", energies[3] + energies[4] + energies[5]);
+	print_energy("Torsional", energies[6]);
+	print_energy("Unbound reference", energies[7]);
+	std::cout << "  Score = Intermolecular + Internal + Torsional - Reference\n";
+	if (m_verbosity > 1) {
+		print_energy("Ligand - receptor", energies[1]);
+		print_energy("Ligand - flexible side chains", energies[2]);
+		print_energy("Flexible side chains - receptor", energies[3]);
+		print_energy("Flexible side chains - each other", energies[4]);
+		print_energy("Ligand internal", energies[5]);
 	}
 }
 
@@ -901,7 +909,6 @@ void Vina::global_search(const int exhaustiveness, const int n_poses, const doub
 	model best_model;
 	boost::optional<model> ref;
 	output_container poses;
-	std::stringstream sstm;
 	rng generator(static_cast<rng::result_type>(m_seed));
 
 	// Setup Monte-Carlo search
@@ -918,14 +925,25 @@ void Vina::global_search(const int exhaustiveness, const int n_poses, const doub
 	parallelmc.display_progress = (m_verbosity > 0);
 
 	// Docking search
-	sstm << "Performing docking (random seed: " << m_seed << ")";
-	doing(sstm.str(), m_verbosity, 0);
+	if (m_verbosity > 0) {
+		std::cout << vina_console::heading("Docking search") << "\n"
+		          << "Seed: " << m_seed << " | Trajectories: " << exhaustiveness
+		          << " | Workers: " << std::min(m_cpu, exhaustiveness) << "\n";
+		if (m_verbosity > 1) {
+			std::cout << "Step budget per trajectory: " << parallelmc.mc.global_steps
+			          << " | Local optimization steps: " << parallelmc.mc.local_steps << "\n";
+			if (max_evals > 0)
+				std::cout << "Evaluation limit per trajectory: " << max_evals << "\n";
+		}
+	}
 	if (m_sf_choice == SF_VINA || m_sf_choice == SF_VINARDO) {
 		parallelmc(m_model, poses, m_precalculated_byatom,    m_grid, m_grid.corner1(), m_grid.corner2(), generator, m_progress_callback);
 	} else {
 		parallelmc(m_model, poses, m_precalculated_byatom, m_ad4grid, m_ad4grid.corner1(), m_ad4grid.corner2(), generator, m_progress_callback);
 	}
-	done(m_verbosity, 1);
+
+	if (m_verbosity > 0)
+		std::cout << vina_console::heading("Refining and rescoring poses") << "\n";
 
 	// Docking post-processing and rescoring
 	poses = remove_redundant(poses, min_rmsd);
@@ -992,7 +1010,7 @@ void Vina::global_search(const int exhaustiveness, const int n_poses, const doub
 			poses[i].unbound = energies[7]; // specific to each scoring function
 
 			if (m_verbosity > 1) {
-				std::cout << "FINAL ENERGY: \n";
+				std::cout << "Pose " << i + 1 << " energy details (before final ranking):\n";
 				show_score(energies);
 			}
 		}
@@ -1017,28 +1035,47 @@ void Vina::global_search(const int exhaustiveness, const int n_poses, const doub
             }
         }
 
-		if (m_verbosity > 0) {
-			std::cout << '\n';
-            std::cout << "mode | score | inter | intra | torsion | reference | delta_score | HAC | -score/HAC | rmsd_lb | rmsd_ub\n";
-            std::cout << "Energy columns: kcal/mol; -score/HAC: kcal/mol/heavy atom; RMSD: angstrom\n";
-		}
-
+		// Compute RMSD regardless of console verbosity.
 		VINA_FOR_IN(i, poses) {
 			m_model.set(poses[i].c);
-
-			// Get RMSD between current pose and best_model
 			const model &r = ref ? ref.get() : best_model;
 			poses[i].lb = m_model.rmsd_lower_bound(r);
 			poses[i].ub = m_model.rmsd_upper_bound(r);
+		}
 
-			if (m_verbosity > 0) {
-                std::cout << i + 1 << " | " << std::fixed << std::setprecision(energy_output_precision)
-                          << poses[i].e << " | " << poses[i].inter << " | " << poses[i].intra
-                          << " | " << poses[i].conf_independent << " | " << poses[i].unbound
-                          << " | " << poses[i].e - poses[0].e << " | " << heavy_atoms << " | ";
-                if (heavy_atoms) std::cout << -poses[i].e / heavy_atoms;
-                else std::cout << "NA";
-                std::cout << " | " << std::setprecision(3) << poses[i].lb << " | " << poses[i].ub << "\n";
+		if (m_verbosity > 0) {
+			std::cout << "\n" << vina_console::heading("Ranked poses") << "\n"
+			          << "Ligand heavy atoms: " << heavy_atoms
+			          << " | Energy: kcal/mol | RMSD: angstrom\n"
+			          << "-score/HAC: docking score per heavy atom (kcal/mol/atom)\n";
+			std::ostringstream header;
+			header << std::right << std::setw(5) << "Mode" << std::setw(14) << "Score"
+			       << std::setw(14) << "Delta score" << std::setw(14) << "-score/HAC"
+			       << std::setw(11) << "RMSD lb" << std::setw(11) << "RMSD ub";
+			std::cout << vina_console::heading(header.str()) << "\n" << std::string(69, '-') << "\n";
+			VINA_FOR_IN(i, poses) {
+				std::ostringstream row;
+				row << std::right << std::setw(5) << i + 1 << std::fixed
+				    << std::setprecision(energy_output_precision) << std::setw(14) << poses[i].e
+				    << std::setw(14) << poses[i].e - poses[0].e;
+				if (heavy_atoms) row << std::setw(14) << -poses[i].e / heavy_atoms;
+				else row << std::setw(14) << "NA";
+				row << std::setprecision(3) << std::setw(11) << poses[i].lb << std::setw(11) << poses[i].ub;
+				std::cout << (i == 0 ? vina_console::success(row.str()) : row.str()) << "\n";
+			}
+
+			std::cout << "\n" << vina_console::heading("Score decomposition (kcal/mol)") << "\n"
+			          << "Score = Inter + Intra + Torsion - Reference\n";
+			std::ostringstream components;
+			components << std::right << std::setw(5) << "Mode" << std::setw(14) << "Inter"
+			           << std::setw(14) << "Intra" << std::setw(14) << "Torsion" << std::setw(14) << "Reference";
+			std::cout << vina_console::heading(components.str()) << "\n" << std::string(61, '-') << "\n";
+			VINA_FOR_IN(i, poses) {
+				std::ostringstream row;
+				row << std::right << std::setw(5) << i + 1 << std::fixed << std::setprecision(energy_output_precision)
+				    << std::setw(14) << poses[i].inter << std::setw(14) << poses[i].intra
+				    << std::setw(14) << poses[i].conf_independent << std::setw(14) << poses[i].unbound;
+				std::cout << row.str() << "\n";
 			}
 		}
 

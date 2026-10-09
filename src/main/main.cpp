@@ -242,7 +242,7 @@ Thank you!\n";
 			("min_rmsd", value<double>(&min_rmsd)->default_value(1.0), "minimum RMSD between output poses")
 			("energy_range", value<double>(&energy_range)->default_value(3.0), "maximum energy difference between the best binding mode and the worst one displayed (kcal/mol)")
 			("spacing", value<double>(&grid_spacing)->default_value(0.375), "grid spacing (Angstrom)")
-			("verbosity", value<int>(&verbosity)->default_value(1), "verbosity (0=no output, 1=normal, 2=verbose)")
+			("verbosity", value<int>(&verbosity)->default_value(1), "verbosity (0=quiet, 1=progress and results, 2=detailed energies)")
 		;
 		options_description config("Configuration file (optional)");
 		config.add_options()
@@ -383,9 +383,9 @@ Thank you!\n";
 				std::cout << "Grid space : " << grid_spacing << "\n";
 			}
 			std::cout << "Exhaustiveness: " << exhaustiveness << "\n";
-			std::cout << "CPU: " << cpu << "\n";
-			if (!vm.count("seed"))
-				std::cout << "Seed: " << seed << "\n";
+			std::cout << "CPU request: " << (cpu == 0 ? std::string("automatic") : std::to_string(cpu)) << "\n";
+			if (seed != 0)
+				std::cout << "Requested seed: " << seed << "\n";
 			std::cout << "Verbosity: " << verbosity << "\n";
 			std::cout << "\n";
 		}

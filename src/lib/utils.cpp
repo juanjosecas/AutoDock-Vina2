@@ -21,6 +21,7 @@
 */
 
 #include "utils.h"
+#include "console.h"
 
 
 inline char separator() {
@@ -41,14 +42,14 @@ path make_path(const std::string& str) {
 
 void doing(const std::string& str, int verbosity, int level) {
     if(verbosity > level) {
-      std::cout << str << std::string(" ... ") << std::flush;
+      std::cout << vina_console::heading(str) << std::string(" ... ") << std::flush;
     }
 }
 
 
 void done(int verbosity, int level) {
     if(verbosity > level) {
-        std::cout << "done.\n" << std::flush;
+        std::cout << vina_console::success("done.") << "\n" << std::flush;
     }
 }
 

@@ -37,3 +37,4 @@ The docking table includes energy components and efficiency per real heavy atom.
 Python `Vina.results()` and `Vina.write_results()` provide named per-pose components,
 CSV/TSV export, optional RDKit descriptors and experimentally supplied LE/LLE.
 See [result properties and examples](docs/result_properties.md).
+See [console output and verbosity](docs/console_output.md).
