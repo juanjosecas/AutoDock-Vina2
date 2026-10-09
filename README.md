@@ -30,3 +30,10 @@ The installation instructions, documentation and tutorials can be found on [read
 Energy output uses six decimals; the Python API preserves unrounded energies.
 See [the parameter audit](docs/scoring_parameters.md) for published defaults,
 physical constants, affinity-derived metrics and compatibility considerations.
+
+### Energy decomposition and ligand properties
+
+The docking table includes energy components and efficiency per real heavy atom.
+Python `Vina.results()` and `Vina.write_results()` provide named per-pose components,
+CSV/TSV export, optional RDKit descriptors and experimentally supplied LE/LLE.
+See [result properties and examples](docs/result_properties.md).

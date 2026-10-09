@@ -45,6 +45,7 @@ class Vina:
         self._rigid_receptor = None
         self._flex_receptor = None
         self._ligands = None
+        self._ligand_pdbqt = None
         self._center = None
         self._box_size = None
         self._spacing = None
@@ -178,12 +179,18 @@ class Vina:
             if not extension == '.pdbqt':
                 raise TypeError('Error: Vina requires a PDBQT file for the ligand.')
 
+        ligand_text = []
+        for filename in pdbqt_filename:
+            with open(filename) as stream:
+                ligand_text.append(stream.read())
+
         if len(pdbqt_filename) == 1:
             self._vina.set_ligand_from_file(pdbqt_filename[0])
         else:
             self._vina.set_ligand_from_file(pdbqt_filename)
 
         self._ligands = pdbqt_filename
+        self._ligand_pdbqt = ligand_text
     
     def set_ligand_from_string(self, pdbqt_string):
         """Set ligand(s) from a string. The chemical file format must be PDBQT.
@@ -205,6 +212,7 @@ class Vina:
             self._vina.set_ligand_from_string(pdbqt_string)
 
         self._ligands = pdbqt_string
+        self._ligand_pdbqt = list(pdbqt_string)
 
     def set_weights(self, weights):
         """Set potential weights for vina, vinardo or ad4 scoring function.
@@ -385,7 +393,7 @@ class Vina:
                 columns=[total, inter, intra, torsions, intra best pose]
             
             AutoDock FF:
-                columns=[total, inter, intra, torsions, -intra]
+                columns=[total, inter, intra, torsions, intra reference (subtracted)]
 
         """
         if n_poses <= 0:
@@ -394,6 +402,43 @@ class Vina:
             raise ValueError('Error: energy range must be greater than zero.')
 
         return np.asarray(self._vina.get_poses_energies(n_poses, energy_range), dtype=float)
+
+    def results(self, n_poses=9, energy_range=3.0, molecule=None,
+                experimental_pvalue=None, activity_type=None, temperature=298.15):
+        """Return named per-pose energy components, properties and efficiencies.
+
+        molecule: original SMILES or RDKit Mol (single-ligand docking only).
+        Without it, a Meeko REMARK SMILES is used when present and RDKit is installed.
+        experimental_pvalue: experimental -log10(activity in mol/L).
+        activity_type: 'Kd', 'Ki', 'IC50' or 'EC50'; required with a p-value.
+        temperature: kelvin, used only for experimental LE.
+        Missing chemical descriptors are None. No score-derived affinity is inferred.
+        """
+        from .results import result_rows
+        if self._ligand_pdbqt is None:
+            raise RuntimeError('No ligand loaded.')
+        energies = self.energies(n_poses, energy_range)
+        components = self._vina.get_poses_components(n_poses, energy_range)
+        return result_rows(energies, components, self._ligand_pdbqt, self._sf_name,
+                           molecule, experimental_pvalue, activity_type, temperature)
+
+    def write_results(self, filename, n_poses=9, energy_range=3.0,
+                      overwrite=False, **kwargs):
+        """Export results() as CSV or TSV; energies use six decimals.
+
+        kwargs are forwarded to results(), including molecule and experimental data.
+        """
+        import csv
+        rows = self.results(n_poses, energy_range, **kwargs)
+        if not rows:
+            raise RuntimeError('No docking poses available for export.')
+        delimiter = '\t' if str(filename).lower().endswith('.tsv') else ','
+        with open(filename, 'w' if overwrite else 'x', newline='') as stream:
+            writer = csv.DictWriter(stream, fieldnames=list(rows[0]), delimiter=delimiter)
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({key: ('%.6f' % value if isinstance(value, float) else value)
+                                 for key, value in row.items()})
 
     def randomize(self, max_steps=10000):
         """Randomize the input ligand conformation.
@@ -417,7 +462,7 @@ class Vina:
                 columns=[total, lig_inter, flex_inter, other_inter, flex_intra, lig_intra, torsions, lig_intra best pose]
             
             AutoDock FF:
-                columns=[total, lig_inter, flex_inter, other_inter, flex_intra, lig_intra, torsions, -lig_intra]
+                columns=[total, lig_inter, flex_inter, other_inter, flex_intra, lig_intra, torsions, intra reference (subtracted)]
 
         """
         # Preserve engine precision for downstream calculations; format only for display.
@@ -441,7 +486,7 @@ class Vina:
                 columns=[total, lig_inter, flex_inter, other_inter, flex_intra, lig_intra, torsions, lig_intra best pose]
             
             AutoDock FF:
-                columns=[total, lig_inter, flex_inter, other_inter, flex_intra, lig_intra, torsions, -lig_intra]
+                columns=[total, lig_inter, flex_inter, other_inter, flex_intra, lig_intra, torsions, intra reference (subtracted)]
 
         """
         if max_steps < 0:

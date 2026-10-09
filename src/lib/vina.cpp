@@ -497,6 +497,19 @@ std::vector< std::vector<double> > Vina::get_poses_coordinates(int how_many, dou
 	return coordinates;
 }
 
+std::vector< std::vector<double> > Vina::get_poses_components(int how_many, double energy_range) {
+    // Use the same selection and validation as the existing energy API.
+    const sz count = get_poses_energies(how_many, energy_range).size();
+    std::vector< std::vector<double> > components;
+    for (sz i = 0; i < count; ++i) {
+        std::vector<double> row = m_poses[i].energy_components;
+        row.push_back(m_poses[i].lb);
+        row.push_back(m_poses[i].ub);
+        components.push_back(row);
+    }
+    return components;
+}
+
 std::vector< std::vector<double> > Vina::get_poses_energies(int how_many, double energy_range) {
 	int n = 0;
 	double best_energy = 0;
@@ -970,6 +983,7 @@ void Vina::global_search(const int exhaustiveness, const int n_poses, const doub
 			// For AD42 intramolecular_energy is equal to 0
 			std::vector<double> energies = score(intramolecular_energy);
 			// Store energy components in current pose
+			poses[i].energy_components = energies;
 			poses[i].e = energies[0]; // specific to each scoring function
 			poses[i].inter = energies[1] + energies[2];
 			poses[i].intra = energies[3] + energies[4] + energies[5];
@@ -993,11 +1007,20 @@ void Vina::global_search(const int exhaustiveness, const int n_poses, const doub
 		m_model.set(poses[0].c);
 		best_model = m_model;
 
+        sz heavy_atoms = 0;
+        for (sz l = 0; l < m_model.num_ligands(); ++l) {
+            const ligand lig = m_model.get_ligand(l);
+            for (sz a = lig.begin; a < lig.end; ++a) {
+                const atom at = m_model.get_atom(a);
+                if (!at.is_hydrogen() && at.el != EL_TYPE_Dummy)
+                    ++heavy_atoms;
+            }
+        }
+
 		if (m_verbosity > 0) {
 			std::cout << '\n';
-			std::cout << "mode |       affinity | dist from best mode\n";
-			std::cout << "     |     (kcal/mol) | rmsd l.b.| rmsd u.b.\n";
-			std::cout << "-----+----------------+----------+----------\n";
+            std::cout << "mode | score | inter | intra | torsion | reference | delta_score | HAC | -score/HAC | rmsd_lb | rmsd_ub\n";
+            std::cout << "Energy columns: kcal/mol; -score/HAC: kcal/mol/heavy atom; RMSD: angstrom\n";
 		}
 
 		VINA_FOR_IN(i, poses) {
@@ -1009,9 +1032,13 @@ void Vina::global_search(const int exhaustiveness, const int n_poses, const doub
 			poses[i].ub = m_model.rmsd_upper_bound(r);
 
 			if (m_verbosity > 0) {
-				std::cout << std::setw(4) << i + 1 << "    " << std::fixed << std::setw(13) << std::setprecision(energy_output_precision) << poses[i].e;
-				std::cout << "  " << std::setw(9) << std::setprecision(3) << poses[i].lb;
-				std::cout << "  " << std::setw(9) << std::setprecision(3) << poses[i].ub << "\n";
+                std::cout << i + 1 << " | " << std::fixed << std::setprecision(energy_output_precision)
+                          << poses[i].e << " | " << poses[i].inter << " | " << poses[i].intra
+                          << " | " << poses[i].conf_independent << " | " << poses[i].unbound
+                          << " | " << poses[i].e - poses[0].e << " | " << heavy_atoms << " | ";
+                if (heavy_atoms) std::cout << -poses[i].e / heavy_atoms;
+                else std::cout << "NA";
+                std::cout << " | " << std::setprecision(3) << poses[i].lb << " | " << poses[i].ub << "\n";
 			}
 		}
 

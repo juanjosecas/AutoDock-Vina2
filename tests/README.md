@@ -66,3 +66,10 @@ per-run memory are included so variability can be inspected.
 
 Peak RSS was approximately 724 to 487 MiB for Vina/Vinardo, and 759 to 509 MiB
 for AD4. All 24 numerical regression comparisons passed locally.
+
+## Report validation without compiling Vina
+
+Run `python tests/test_result_properties.py` to check named energy components,
+reference-energy signs, heavy-atom counting, derived metrics, optional RDKit
+properties, and CSV/TSV export. The tests use a stub native extension and do not
+build or run the docking engine.

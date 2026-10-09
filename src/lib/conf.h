@@ -365,6 +365,7 @@ struct output_type {
     fl conf_independent;
     fl unbound;
     fl total;
+	std::vector<double> energy_components;
 	vecv coords;
 	output_type(const conf& c_, fl e_) : c(c_), e(e_) {}
 	//output_type(const conf& c_, fl e_, fl intra_, fl conf_independent_) : c(c_), e(e_), intra(intra_), conf_independent(conf_independent_) {}
