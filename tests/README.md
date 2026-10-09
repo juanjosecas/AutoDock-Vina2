@@ -86,3 +86,14 @@ Progress callbacks retain their existing frequency and serialization. Batching
 progress updates and moving callbacks out of their lock are deferred because they
 would change callback behavior. These scheduling changes were reviewed without
 compiling or running native Vina; no speedup is claimed without measurement.
+
+## Optional preparation (no native build)
+
+With Meeko 0.7.1, RDKit, gemmi and scipy installed:
+
+```bash
+python -m unittest discover -s tests -p 'test_preparation.py' -v
+```
+
+These tests prepare real small molecules/receptor fixtures. Native Vina is stubbed;
+no repository compilation or docking is performed.

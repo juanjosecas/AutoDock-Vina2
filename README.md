@@ -38,3 +38,4 @@ Python `Vina.results()` and `Vina.write_results()` provide named per-pose compon
 CSV/TSV export, optional RDKit descriptors and experimentally supplied LE/LLE.
 See [result properties and examples](docs/result_properties.md).
 See [console output and verbosity](docs/console_output.md).
+See [automatic, verbose ligand/receptor preparation](docs/preparation.md).

@@ -46,6 +46,8 @@ class Vina:
         self._flex_receptor = None
         self._ligands = None
         self._ligand_pdbqt = None
+        self._verbosity = verbosity
+        self._preparation_reports = []
         self._center = None
         self._box_size = None
         self._spacing = None
@@ -124,8 +126,15 @@ class Vina:
         
         return info
 
-    def set_receptor(self, rigid_pdbqt_filename=None, flex_pdbqt_filename=None):
-        """Set receptor.
+    def set_receptor(self, rigid_pdbqt_filename=None, flex_pdbqt_filename=None,
+                     prepared_filename=None, delete_residues=None, set_template=None,
+                     preparation_verbosity=None, overwrite=False):
+        """Set a PDBQT receptor, or prepare a rigid PDB/PQR receptor with Meeko.
+
+        Non-PDBQT rigid input is prepared into prepared_filename (default:
+        <input>.prepared.pdbqt). Template overrides and deletions use Meeko syntax.
+        Flexible input must already be PDBQT. Preparation verbosity defaults to
+        this Vina instance's verbosity. No pH optimization is performed.
 
         Args:
             rigid_pdbqt_filename (str): rigid pdbqt receptor filename (default: None)
@@ -135,21 +144,33 @@ class Vina:
         if rigid_pdbqt_filename is None and flex_pdbqt_filename is None:
             raise ValueError('Error: No (rigid) receptor or flexible residues were specified')
 
-        # For the rigid part of the receptor
-        if rigid_pdbqt_filename is not None:
-            if not os.path.exists(rigid_pdbqt_filename):
-                raise RuntimeError('Error: file %s does not exist.' % rigid_pdbqt_filename)
-            _, extension = os.path.splitext(rigid_pdbqt_filename)
-            if not extension == '.pdbqt':
-                raise TypeError('Error: Vina requires a PDBQT file for the (rigid) receptor.')
-
+        flex_pdbqt_filename = str(flex_pdbqt_filename) if flex_pdbqt_filename is not None else None
         # For the flex part of the receptor
         if flex_pdbqt_filename is not None:
             if not os.path.exists(flex_pdbqt_filename):
                 raise RuntimeError('Error: file %s does not exist.' % flex_pdbqt_filename)
             _, extension = os.path.splitext(flex_pdbqt_filename)
-            if not extension == '.pdbqt':
+            if extension.lower() != '.pdbqt':
                 raise TypeError('Error: Vina requires a PDBQT file for the (flex) receptor.')
+
+        preparation = None
+        if rigid_pdbqt_filename is not None and os.path.splitext(str(rigid_pdbqt_filename))[1].lower() != '.pdbqt':
+            from .preparation import prepare_receptor
+            preparation = prepare_receptor(
+                rigid_pdbqt_filename, prepared_filename, delete_residues, set_template,
+                self._verbosity if preparation_verbosity is None else preparation_verbosity, overwrite)
+            rigid_pdbqt_filename = preparation['pdbqt_filename']
+        elif prepared_filename is not None or delete_residues or set_template:
+            raise ValueError('Preparation options require a rigid PDB/PQR input.')
+        rigid_pdbqt_filename = str(rigid_pdbqt_filename) if rigid_pdbqt_filename is not None else None
+
+        # For the rigid part of the receptor
+        if rigid_pdbqt_filename is not None:
+            if not os.path.exists(rigid_pdbqt_filename):
+                raise RuntimeError('Error: file %s does not exist.' % rigid_pdbqt_filename)
+            _, extension = os.path.splitext(rigid_pdbqt_filename)
+            if extension.lower() != '.pdbqt':
+                raise TypeError('Error: Vina requires a PDBQT file for the (rigid) receptor.')
 
         if rigid_pdbqt_filename is not None:
             if flex_pdbqt_filename is not None:
@@ -161,37 +182,61 @@ class Vina:
 
         self._rigid_receptor = rigid_pdbqt_filename
         self._flex_receptor = flex_pdbqt_filename
+        if preparation is not None:
+            self._preparation_reports.append(preparation['report'])
 
-    def set_ligand_from_file(self, pdbqt_filename):
-        """Set ligand(s) from a file. The chemical file format must be PDBQT.
+    def set_ligand_from_file(self, pdbqt_filename, preparation_verbosity=None):
+        """Load PDBQT ligand(s), automatically preparing SDF/MOL/MOL2 with Meeko.
 
-        Args:
-            pdbqt_filename (str or list): Name or list of PDBQT filename(s)
-
+        Exactly one molecule per file; a list means simultaneous ligands, not batch
+        screening. Preserve existing 3D coordinates. Missing 3D is generated with
+        seed 42. Preparation verbosity defaults to this instance's verbosity.
         """
         if not isinstance(pdbqt_filename, (list, tuple)):
             pdbqt_filename = [pdbqt_filename]
-
-        for pf in pdbqt_filename:
-            if not os.path.exists(pf):
-                raise RuntimeError('Error: file %s does not exist.' % pf)
-            _, extension = os.path.splitext(pf)
-            if not extension == '.pdbqt':
-                raise TypeError('Error: Vina requires a PDBQT file for the ligand.')
-
-        ligand_text = []
-        for filename in pdbqt_filename:
-            with open(filename) as stream:
-                ligand_text.append(stream.read())
-
-        if len(pdbqt_filename) == 1:
-            self._vina.set_ligand_from_file(pdbqt_filename[0])
+        if not pdbqt_filename:
+            raise ValueError('Supply at least one ligand file.')
+        filenames = [str(filename) for filename in pdbqt_filename]
+        for filename in filenames:
+            if not os.path.isfile(filename):
+                raise RuntimeError('Error: file %s does not exist.' % filename)
+        texts, reports = [], []
+        for filename in filenames:
+            if os.path.splitext(filename)[1].lower() == '.pdbqt':
+                with open(filename) as stream:
+                    texts.append(stream.read())
+            else:
+                from .preparation import prepare_ligand
+                preparation = prepare_ligand(
+                    filename, verbosity=self._verbosity if preparation_verbosity is None else preparation_verbosity)
+                texts.append(preparation['pdbqt_string'])
+                reports.append(preparation['report'])
+        if reports:
+            self.set_ligand_from_string(texts)
+        elif len(filenames) == 1:
+            self._vina.set_ligand_from_file(filenames[0])
         else:
-            self._vina.set_ligand_from_file(pdbqt_filename)
+            self._vina.set_ligand_from_file(filenames)
+        self._ligands = filenames
+        self._ligand_pdbqt = texts
+        self._preparation_reports.extend(reports)
 
-        self._ligands = pdbqt_filename
-        self._ligand_pdbqt = ligand_text
-    
+    def set_ligand_from_smiles(self, smiles, seed=42, preparation_verbosity=None):
+        """Prepare one SMILES with RDKit/Meeko and load it directly into Vina."""
+        from .preparation import prepare_ligand
+        preparation = prepare_ligand(
+            smiles, input_format='smiles', seed=seed,
+            verbosity=self._verbosity if preparation_verbosity is None else preparation_verbosity)
+        self.set_ligand_from_string(preparation['pdbqt_string'])
+        self._ligands = [smiles]
+        self._preparation_reports.append(preparation['report'])
+        return preparation['report']
+
+    def preparation_reports(self):
+        """Return copies of the successful automatic-preparation reports."""
+        from copy import deepcopy
+        return deepcopy(self._preparation_reports)
+
     def set_ligand_from_string(self, pdbqt_string):
         """Set ligand(s) from a string. The chemical file format must be PDBQT.
 
