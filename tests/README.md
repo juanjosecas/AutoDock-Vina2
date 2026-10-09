@@ -73,3 +73,16 @@ Run `python tests/test_result_properties.py` to check named energy components,
 reference-energy signs, heavy-atom counting, derived metrics, optional RDKit
 properties, and CSV/TSV export. The tests use a stub native extension and do not
 build or run the docking engine.
+
+## Conservative scheduling changes
+
+The dynamic Monte Carlo scheduler creates at most `min(cpu, exhaustiveness)`
+workers. Task creation, random seed assignment, Monte Carlo work and deterministic
+result merge order are unchanged. The scheduler notifies its waiting caller only
+when the final task completes; the completion predicate remains protected by the
+same mutex and checked in a loop to handle spurious wakeups.
+
+Progress callbacks retain their existing frequency and serialization. Batching
+progress updates and moving callbacks out of their lock are deferred because they
+would change callback behavior. These scheduling changes were reviewed without
+compiling or running native Vina; no speedup is claimed without measurement.

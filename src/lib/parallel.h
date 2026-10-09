@@ -126,7 +126,9 @@ private:
 			{
 				boost::mutex::scoped_lock self_lk(self);
 				++finished;
-				busy.notify_one();
+				// run() only returns once every task has finished.
+				if(finished == size)
+					busy.notify_one();
 			}
 		}
 	}

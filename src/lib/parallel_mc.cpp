@@ -24,6 +24,7 @@
 #include "parallel_mc.h"
 #include "coords.h"
 #include "parallel_progress.h"
+#include <algorithm>
 
 struct parallel_mc_task {
 	model m;
@@ -68,7 +69,9 @@ void parallel_mc::operator()(const model& m, output_container& out, const precal
 		task_container.push_back(new parallel_mc_task(m, random_int(0, 1000000, generator)));
 	if(display_progress) 
 		pp.init(num_tasks * mc.global_steps);
-	parallel_iter<parallel_mc_aux, parallel_mc_task_container, parallel_mc_task, true> parallel_iter_instance(&parallel_mc_aux_instance, num_threads);
+	// There cannot be more active workers than independent search tasks.
+	const sz worker_count = std::min(num_threads, num_tasks);
+	parallel_iter<parallel_mc_aux, parallel_mc_task_container, parallel_mc_task, true> parallel_iter_instance(&parallel_mc_aux_instance, worker_count);
 	parallel_iter_instance.run(task_container);
 	merge_output_containers(task_container, out, mc.min_rmsd, mc.num_saved_mins);
 }
