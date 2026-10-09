@@ -71,7 +71,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: C:\local\boost_1_83_0
-          key: boost-1.83.0-windows-2022-msvc-14.3-x64-v1
+          key: boost-1.83.0-windows-2022-msvc-14.3-x64-v2
 
       - name: Install Boost for Windows
         if: runner.os == 'Windows' && steps.boost-cache.outputs.cache-hit != 'true'
@@ -79,10 +79,18 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          $url = "https://sourceforge.net/projects/boost/files/boost-binaries/1.83.0/boost_1_83_0-msvc-14.3-64.exe/download"
+          $url = "https://archives.boost.io/release/1.83.0/binaries/boost_1_83_0-msvc-14.3-64.exe"
           $installer = Join-Path $env:RUNNER_TEMP "boost.exe"
 
-          Invoke-WebRequest -Uri $url -OutFile $installer
+          & curl.exe --fail --location --retry 3 --output $installer $url
+          if ($LASTEXITCODE -ne 0) {
+            throw "Boost download failed with exit code $LASTEXITCODE"
+          }
+          $expectedHash = "67975ce4a8799f17728ddba8e64e9b450a6bda7762643e829a96ccbbd1ca17d2"
+          $actualHash = (Get-FileHash -Path $installer -Algorithm SHA256).Hash
+          if ($actualHash -ne $expectedHash) {
+            throw "Boost download failed SHA256 verification"
+          }
 
           $process = Start-Process `
             -FilePath $installer `
